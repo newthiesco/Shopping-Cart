@@ -1,0 +1,83 @@
+pipeline {
+    agent any
+    tools {
+        jdk 'jdk17'
+        maven 'maven3'
+    }
+    environment {
+        SCANNER_HOME = tool 'sonar-scanner'  // Ensure this matches your actual tool name
+    }
+
+    stages {
+        stage('Git Checkout') {
+            steps {
+                git branch: 'main', 
+                    changelog: false, 
+                    credentialsId: '82693676-faed-46fa-a4bd-d8b8fa25dd9d', 
+                    poll: false, 
+                    url: 'https://github.com/newthiesco/Shopping-Cart.git'
+            }
+        }
+
+        stage('Compile') {
+            steps {
+                sh "mvn clean compile -DskipTests=true"
+            }
+        }
+
+        stage('OWASP SCAN') {
+            steps {
+                dependencyCheck additionalArguments: '--scan ./', odcInstallation: 'DP'
+                dependencyCheckPublisher pattern: '**/dependency-check-report.xml'
+            }
+        }
+        
+        stage('Sonarqube') {
+            steps {
+                withSonarQubeEnv('sonar-server') {
+                    sh ''' 
+                        $SCANNER_HOME/bin/sonar-scanner -Dsonar.projectName=Shopping-Cart \
+                        -Dsonar.java.binaries=. \
+                        -Dsonar.projectKey=Shopping-Cart 
+                    '''
+                }
+            }
+        }
+
+        stage('Build') {
+            steps {
+                sh "mvn clean package -DskipTests=true"
+            }
+        }
+        
+        stage('Push') {
+            steps {
+                script {
+                    withDockerRegistry(credentialsId: '35921592-11e5-41fb-acb8-07e103bf6593', toolName: 'docker') {
+                        sh "docker build -t shopping-cart -f docker/Dockerfile ."
+                        sh "docker tag shopping-cart thiexco/shopping-cart:latest"
+                        sh "docker push thiexco/shopping-cart:latest"
+                    }
+                }
+            }
+        }
+        
+        stage('Deploy') {
+            steps {
+                script {
+                    withDockerRegistry(credentialsId: '35921592-11e5-41fb-acb8-07e103bf6593', toolName: 'docker') {
+                        // Stop and remove the existing container if it's running
+                        sh '''
+                        if [ "$(docker ps -q -f name=shopping)" ]; then
+                            docker stop shopping
+                            docker rm shopping
+                        fi
+                        '''
+                        // Run the new container
+                        sh "docker run -d --name shopping-Cart1 -p 8070:8070 thiexco/shopping-cart:latest"
+                    }
+                }
+            }
+        }
+    }
+}
