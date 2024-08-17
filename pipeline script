@@ -81,3 +81,78 @@ pipeline {
         }
     }
 }
+
+
+
+
+====================================================================================================================================
+
+pipeline {
+    agent any
+    tools{
+        jdk 'jdk11'
+        maven 'maven3'
+    }    
+        environment {
+            SCANNER_HOME= tool 'sonar-scanner'
+        }
+    
+
+    stages {
+        stage('Git Checkout') {
+            steps {
+                git branch: 'main',
+                changelog: false,
+                credentialsId: 'b87e2427-1db6-467f-8c1e-da59b7f74b8a',
+                poll: false,
+                url: 'https://github.com/newthiesco/Shopping-Cart.git'
+            }
+        }
+    
+        stage('Compile') {
+            steps {
+                sh "mvn clean compile -DskipTest=true"
+            }
+        }
+        
+        stage('OWASP-SCAN') {
+            steps {
+                dependencyCheck additionalArguments: '--scan ./', odcInstallation: 'DP'
+                dependencyCheckPublisher pattern: '**/dependency-check-report.xml'
+            }
+        }
+        
+        stage('sonarqube') {
+            steps {
+                withSonarQubeEnv('sonar-server') {
+                    sh ''' 
+                        $SCANNER_HOME/bin/sonar-scanner -Dsonar.projectName=Shopping-Cart \
+                        -Dsonar.java.binaries=. \
+                        -Dsonar.projectKey=Shopping-Cart 
+                    '''
+                }
+            }
+        }
+        
+        stage('BUILD') {
+            steps {
+                sh "mvn clean compile -DskipTest=true"
+            }
+        }
+        
+        stage('DOCKER IMAGE') {
+            steps {
+                script{ 
+                withDockerRegistry(credentialsId: '938b62d6-8dfc-4b6e-ba0e-9488a7c8755f') {
+                    def imageName = "thiexco/shopping_cart:latest"
+                    sh "docker build -t ${imageName} -f docker/Dockerfile ."
+                    sh "docker push thiexco/${imageName}:latest"
+                
+                }
+                    
+                }
+
+            }
+        }
+    }
+}
